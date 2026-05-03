@@ -3,7 +3,7 @@ from typing import List
 
 from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity import Entity
-from gehomesdk import ErdCode, ErdApplianceType
+from gehomesdk import ErdCode, ErdApplianceType, ErdCodeClass
 
 from .base import ApplianceApi
 from ..entities import GeErdSensor, GeErdBinarySensor, GeErdButton
@@ -33,6 +33,10 @@ class DryerApi(ApplianceApi):
 
         dryer_entities = self.get_dryer_entities()
         
+        dryer_entities.extend(
+            self.get_dryer_passthrough_entities(common_entities + dryer_entities)
+        )
+
         # Add the start cycle button
         dryer_entities.append(GeDryerCycleButton(self))
 
@@ -66,3 +70,37 @@ class DryerApi(ApplianceApi):
             dryer_entities.extend([GeErdSensor(self, ErdCode.LAUNDRY_DRYER_ECODRY_OPTION_SELECTION, entity_category=EntityCategory.DIAGNOSTIC)])
 
         return dryer_entities
+
+    def get_dryer_passthrough_entities(self, existing_entities: List[Entity]):
+        existing_erd_codes = {
+            entity.erd_code
+            for entity in existing_entities
+            if hasattr(entity, "erd_code")
+        }
+        passthrough_entities = []
+
+        for erd_code in sorted(self.appliance.known_properties, key=str):
+            translated_erd_code = self.appliance.translate_erd_code(erd_code)
+            if translated_erd_code in existing_erd_codes:
+                continue
+            if not self._is_dryer_passthrough_erd_code(translated_erd_code):
+                continue
+
+            passthrough_entities.append(
+                GeErdSensor(
+                    self,
+                    translated_erd_code,
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                )
+            )
+            existing_erd_codes.add(translated_erd_code)
+
+        return passthrough_entities
+
+    def _is_dryer_passthrough_erd_code(self, erd_code):
+        erd_code_class = self.appliance.get_erd_code_class(erd_code)
+        if erd_code_class == ErdCodeClass.LAUNDRY_DRYER_SENSOR:
+            return True
+
+        erd_name = erd_code.name if isinstance(erd_code, ErdCode) else str(erd_code)
+        return erd_name.startswith("LAUNDRY_DRYER_")
